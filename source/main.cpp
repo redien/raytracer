@@ -1,4 +1,4 @@
-﻿
+
 #include <limbus/OpenglWindow.hpp>
 #include <limbus/Timer.hpp>
 #include <limbus/Keyboard.hpp>
@@ -12,7 +12,8 @@
 #include <complex>
 #include <cmath>
 #include <limits>
-#include <boost/thread.hpp>
+#include <thread>
+#include <chrono>
 #include <vector>
 
 class Raytracer
@@ -168,7 +169,7 @@ public:
 		createScene();
 	}
 
-	typedef boost::lock_guard<boost::mutex> lock_guard;
+	typedef std::lock_guard<std::mutex> lock_guard;
 
 	void setJob(Job new_job)
 	{
@@ -218,7 +219,7 @@ public:
 			}
 			else
 			{
-				boost::thread::sleep(boost::get_system_time() + boost::posix_time::milliseconds(1));
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			}
 
 			lock_guard lock(running_mutex);
@@ -233,7 +234,7 @@ private:
 	bool job_done;
 	bool running;
 
-	boost::mutex job_mutex, running_mutex;
+	std::mutex job_mutex, running_mutex;
 
 	double texture_width;
 	double texture_height;
@@ -451,7 +452,7 @@ public:
 	glm::vec3 camera_position;
 
 	std::vector<Raytracer*> workers;
-	std::vector<boost::thread> worker_threads;
+	std::vector<std::thread*> worker_threads;
 
 	void stopThreads()
 	{
@@ -460,9 +461,10 @@ public:
 			(*it)->stop();
 		}
 
-		for (std::vector<boost::thread>::iterator it = worker_threads.begin(); it != worker_threads.end(); ++it)
+		for (std::vector<std::thread*>::iterator it = worker_threads.begin(); it != worker_threads.end(); ++it)
 		{
-			it->join();
+			(*it)->join();
+            delete *it;
 		}
 
 		worker_threads.clear();
@@ -480,7 +482,9 @@ public:
 		{
 			workers.push_back(new Raytracer(texture_data, (double)window.getWidth(), (double)window.getHeight()));
 			Raytracer* worker = workers[workers.size() - 1];
-			worker_threads.push_back(boost::thread(boost::ref(*worker)));
+			worker_threads.push_back(new std::thread([&](){
+                (*worker)();
+            }));
 		}
 
 		assignJobs();
@@ -522,26 +526,17 @@ public:
 		window.setHeight(600);
 		window.create();
 
-		Limbus::Keyboard keyboard(&window);
+		Limbus::Keyboard keyboard;
 		keyboard.addEventHandler(this);
+        window.addInputDevice(&keyboard);
 
-		glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
-		glDisable( GL_DEPTH_TEST );
-		glEnable( GL_BLEND );
-		glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-		glEnable( GL_TEXTURE_2D );
-
-		glMatrixMode( GL_PROJECTION );
-		glLoadIdentity();
-		glOrtho( 0.0f, window.getWidth(), window.getHeight(), 0.0f, -100.0f, 100.0f );
-		glMatrixMode( GL_MODELVIEW );
-		glLoadIdentity();
+        Pingo::Context context(&window);
 
 		texture_data = new unsigned char[window.getWidth() * window.getHeight() * 3];
 
-		texture = new Pingo::Texture();
+		texture = new Pingo::Texture(&context);
 		texture->loadFromMemory(texture_data, window.getWidth(), window.getHeight(), 3);
-		sprite_buffer = new Pingo::SpriteBuffer(texture, 1, true);
+		sprite_buffer = new Pingo::SpriteBuffer(&context, texture, 1, true);
 		
 		sprite_buffer->setWritable(true);
 		sprite_buffer->setRectangle(0, 0.0f, 0.0f, (float)window.getWidth(), (float)window.getHeight());
@@ -596,6 +591,7 @@ public:
 			}
 			if (done)
 			{
+                std::cout << "Doing it" << std::endl;
 				texture->update(texture_data);
 				double elapsed = fps_timer.getElapsed();
 				fps_timer.reset();
@@ -631,8 +627,10 @@ public:
 	}
 };
 
-void main()
+int main()
 {
 	Application app;
 	app.run();
+    
+    return EXIT_SUCCESS;
 }

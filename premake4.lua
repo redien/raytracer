@@ -8,10 +8,13 @@ solution "RaytracingDemo"
 		"../limbus/generated/cpp",
 		"../pingo/include",
 		"../pingo/generated/cpp",
-		"../glm-0.9.2.3/",
+		"../glm",
 		"./include",
 	}
-	
+
+    buildoptions "-std=c++11 -stdlib=libc++"
+    linkoptions "-stdlib=libc++"
+
 	project "raytracing"
 		language "C++"
 		location "build"
@@ -23,9 +26,31 @@ solution "RaytracingDemo"
 			"limbus",
 			"limbus_cpp",
 			"pingo",
-			"pingo_cpp",
-			"opengl32"
+			"pingo_cpp"
 		}
+
+
+        if os.is "windows" then
+            links {
+                "opengl32"
+            }
+        end
+
+        if os.is "macosx" then
+            links {
+                "OpenGL.framework",
+                "ForceFeedback.framework",
+                "Cocoa.framework",
+                "Carbon.framework",
+                "IOKit.framework",
+                "CoreAudio.framework",
+                "AudioToolbox.framework",
+                "AudioUnit.framework",
+                "SDL2",
+                "m"
+            }
+        end
+
 		libdirs {
 			"../limbus/lib/Debug",
 			"../limbus/lib/Release",
@@ -34,10 +59,10 @@ solution "RaytracingDemo"
 
 		configuration "Debug"
 			includedirs {
-				"../boost_1_47_0_d/",
+				"../boost_1_55_0/",
 			}
 			libdirs {
-				"../boost_1_47_0_d/stage/lib"
+				"../boost_1_55_0/stage/lib"
 			}
 			flags {"Symbols", "ExtraWarnings"}
 			kind "ConsoleApp"
@@ -45,10 +70,10 @@ solution "RaytracingDemo"
 		
 		configuration "Release"
 			includedirs {
-				"../boost_1_47_0/",
+				"../boost_1_55_0/",
 			}
 			libdirs {
-				"../boost_1_47_0/stage/lib"
+				"../boost_1_55_0/stage/lib"
 			}
 			flags {"OptimizeSpeed", "StaticRuntime"}
 			kind "WindowedApp"
