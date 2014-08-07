@@ -12,9 +12,10 @@
 #include <complex>
 #include <cmath>
 #include <limits>
-#include <thread>
-#include <chrono>
 #include <vector>
+
+#include <thread>
+#include <atomic>
 
 class Raytracer
 {
@@ -156,7 +157,7 @@ public:
 		size_t y_count;
 		size_t max_depth;
 
-		glm::vec3 camera_position;
+		float camera_x, camera_y, camera_z;
 	};
 
 	static const int max_iterations = 1000;
@@ -169,81 +170,65 @@ public:
 		createScene();
 	}
 
-	typedef std::lock_guard<std::mutex> lock_guard;
-
 	void setJob(Job new_job)
 	{
 		current_job = new_job;
-		lock_guard lock(job_mutex);
 		job_done = false;
 	}
 
 	bool jobDone()
 	{
-		lock_guard lock(job_mutex);
 		return job_done;
 	}
 
 	void stop()
 	{
-		lock_guard lock(running_mutex);
 		running = false;
 	}
 
 	void operator () ()
 	{
-		bool _running;
+        running = true;
+        do {
+            if (!job_done) {
+                Job job = current_job;
 
-		do
-		{
-			bool done;
-			{
-				lock_guard lock(job_mutex);
-				done = job_done;
-			}
+                camera_position = glm::vec3(job.camera_x, job.camera_y, job.camera_z);
+                max_depth = job.max_depth;
 
-			if (!done)
-			{
-				for (size_t y = current_job.y_start; y < current_job.y_start + current_job.y_count; ++y)
-				{
-					for (size_t x = 0; x < (size_t)texture_width; ++x)
-					{
-						glm::vec3 color(0, 0, 0);
-						CalculatePixel(x, y, color);
-						WritePixel(x, y, color);
-					}
-				}
-
-				lock_guard lock(job_mutex);
-				job_done = true;
-			}
-			else
-			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-			}
-
-			lock_guard lock(running_mutex);
-			_running = running;
-		} while (_running);
+                for (size_t y = job.y_start; y < job.y_start + job.y_count; ++y)
+                {
+                    for (size_t x = 0; x < (size_t)texture_width; ++x)
+                    {
+                        glm::vec3 color(0, 0, 0);
+                        CalculatePixel(x, y, color);
+                        WritePixel(x, y, color);
+                    }
+                }
+                
+                job_done = true;
+            }
+        } while (running);
 	}
 
 private:
 	Raytracer(Raytracer& other);
 
-	Job current_job;
-	bool job_done;
-	bool running;
-
-	std::mutex job_mutex, running_mutex;
+	std::atomic<Job> current_job;
+	std::atomic_bool job_done;
+	std::atomic_bool running;
 
 	double texture_width;
 	double texture_height;
 	float aspect_ratio;
-
+    
 	unsigned char* texture_data;
 
 	std::vector<Geometry*> geometry_list;
 	PointLight point_light;
+    
+    float max_depth;
+    glm::vec3 camera_position;
 
 	void createScene()
 	{
@@ -279,7 +264,7 @@ private:
 		float normalized_x = (float)x / (float)texture_width - 0.5f;
 		float normalized_y = ((1.0f - (float)y / (float)texture_height) - 0.5f) * aspect_ratio;
 
-		glm::vec3 ray_origin = current_job.camera_position;
+		glm::vec3 ray_origin = camera_position;
 		Ray ray(ray_origin, glm::normalize(glm::vec3(normalized_x, normalized_y, 0.5f)));
 
 		raytrace(ray, color);
@@ -291,7 +276,7 @@ private:
 		const float pi = 3.141592653589793238462643383279502884197169399375105820974944f;
 		const float space_refraction_index = 1.000277f;
 
-		if (depth > current_job.max_depth)
+		if (depth > max_depth)
 			return;
 
 		glm::vec3 intersection;
@@ -452,7 +437,7 @@ public:
 	glm::vec3 camera_position;
 
 	std::vector<Raytracer*> workers;
-	std::vector<std::thread*> worker_threads;
+    std::vector<std::thread*> worker_threads;
 
 	void stopThreads()
 	{
@@ -460,18 +445,18 @@ public:
 		{
 			(*it)->stop();
 		}
-
+        
 		for (std::vector<std::thread*>::iterator it = worker_threads.begin(); it != worker_threads.end(); ++it)
 		{
 			(*it)->join();
-            delete *it;
 		}
-
-		worker_threads.clear();
 
 		for (std::vector<Raytracer*>::iterator it = workers.begin(); it != workers.end(); ++it)
 			delete (*it);
+		for (std::vector<std::thread*>::iterator it = worker_threads.begin(); it != worker_threads.end(); ++it)
+			delete (*it);
 		workers.clear();
+		worker_threads.clear();
 	}
 
 	void createThreads()
@@ -481,13 +466,17 @@ public:
 		for (size_t i = 0; i < threads; ++i)
 		{
 			workers.push_back(new Raytracer(texture_data, (double)window.getWidth(), (double)window.getHeight()));
-			Raytracer* worker = workers[workers.size() - 1];
-			worker_threads.push_back(new std::thread([&](){
+		}
+
+        assignJobs();
+
+		for (size_t i = 0; i < threads; ++i)
+		{
+            Raytracer* worker = workers[i];
+			worker_threads.push_back(new std::thread([&, worker] () {
                 (*worker)();
             }));
 		}
-
-		assignJobs();
 	}
 
 	void assignJobs()
@@ -508,7 +497,9 @@ public:
 
 			job.max_depth = max_depth;
 
-			job.camera_position = camera_position;
+			job.camera_x = camera_position.x;
+			job.camera_y = camera_position.y;
+			job.camera_z = camera_position.z;
 
 			lines_assigned += step;
 
@@ -537,7 +528,7 @@ public:
 		texture = new Pingo::Texture(&context);
 		texture->loadFromMemory(texture_data, window.getWidth(), window.getHeight(), 3);
 		sprite_buffer = new Pingo::SpriteBuffer(&context, texture, 1, true);
-		
+
 		sprite_buffer->setWritable(true);
 		sprite_buffer->setRectangle(0, 0.0f, 0.0f, (float)window.getWidth(), (float)window.getHeight());
 		sprite_buffer->setColor(0, 1.0f, 1.0f, 1.0f, 1.0f);
@@ -559,8 +550,6 @@ public:
 
 		while (running)
 		{
-			double elapsed = 1.0f + timer.getElapsed() * 0.005;
-
 			window.pollEvents();
 			keyboard.pollEvents();
 
@@ -580,46 +569,41 @@ public:
 				camera_position.y -= speed * dt;
 			delta_timer.reset();
 
-			bool done = true;
+            bool done = true;
 			for (std::vector<Raytracer*>::iterator it = workers.begin(); it != workers.end(); ++it)
 			{
-				if (!(*it)->jobDone())
-				{
-					done = false;
-					break;
-				}
+				if (!(*it)->jobDone()) {
+                    done = false;
+                }
 			}
-			if (done)
-			{
-                std::cout << "Doing it" << std::endl;
-				texture->update(texture_data);
-				double elapsed = fps_timer.getElapsed();
-				fps_timer.reset();
-				std::stringstream stream;
-				stream << "Raytracing Demo | ";
-				if (selection == 0)
-					stream << "Threads: " << threads;
-				else if (selection == 1)
-					stream << "Max depth: " << max_depth;
-				stream << " | Average FPS: " << 1.0f / average_elapsed << " (" << average_elapsed * 1000.0f << " ms) | FPS: " << 1.0f / elapsed << " (" << elapsed * 1000.0f << " ms)";
-				window.setCaption(stream.str().c_str());
+            
+            if (done) {
+                texture->update(texture_data);
+                
+                double elapsed = fps_timer.getElapsed();
+                fps_timer.reset();
+                std::stringstream stream;
+                stream << "Raytracing Demo | ";
+                if (selection == 0)
+                    stream << "Threads: " << threads;
+                else if (selection == 1)
+                    stream << "Max depth: " << max_depth;
+                stream << " | Average FPS: " << 1.0f / average_elapsed << " (" << average_elapsed * 1000.0f << " ms) | FPS: " << 1.0f / elapsed << " (" << elapsed * 1000.0f << " ms)";
+                window.setCaption(stream.str().c_str());
+                average_frames += 1;
+                if (average_frames == 10)
+                {
+                    average_elapsed = average_timer.getElapsed() / average_frames;
+                    average_timer.reset();
+                    average_frames = 0;
+                }
 
-				average_frames += 1;
-				if (average_frames == 10)
-				{
-					average_elapsed = average_timer.getElapsed() / average_frames;
-					average_timer.reset();
-					average_frames = 0;
-				}
-
-				assignJobs();
-			}
+                assignJobs();
+            }
 
 			sprite_buffer->draw(0, 1, 0, 0);
 			window.swapBuffers();
 		}
-
-		stopThreads();
 
 		delete sprite_buffer;
 		delete texture;
