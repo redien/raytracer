@@ -52,8 +52,7 @@ solution "RaytracingDemo"
         end
 
 		libdirs {
-			"../limbus/lib/Debug",
-			"../limbus/lib/Release",
+			"../limbus/lib",
 			"../pingo/lib",
 		}
 
