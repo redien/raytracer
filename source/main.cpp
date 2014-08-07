@@ -605,6 +605,8 @@ class Application : public Limbus::OpenglWindow::EventHandler, public Limbus::Ke
             window.swapBuffers();
         }
 
+        stopThreads();
+        
         delete sprite_buffer;
         delete texture;
         delete [] texture_data;
